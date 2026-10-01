@@ -16,12 +16,12 @@ export function getAllInteractions(): Record<string, UserEventInteraction> {
 
 export function getInteraction(eventId: string): UserEventInteraction {
   const all = getAllInteractions();
-  return all[eventId] || { starred: false, participating: false, comments: [] };
+  return all[eventId] || { starred: false, participating: false, comments: [], reminderEnabled: false };
 }
 
 export function saveInteraction(eventId: string, data: Partial<UserEventInteraction>): UserEventInteraction {
   const all = getAllInteractions();
-  const current = all[eventId] || { starred: false, participating: false, comments: [] };
+  const current = all[eventId] || { starred: false, participating: false, comments: [], reminderEnabled: false };
   const updated: UserEventInteraction = {
     ...current,
     ...data,
@@ -45,6 +45,13 @@ export function toggleParticipating(eventId: string): boolean {
   const curr = getInteraction(eventId);
   const nextVal = !curr.participating;
   saveInteraction(eventId, { participating: nextVal });
+  return nextVal;
+}
+
+export function toggleReminder(eventId: string): boolean {
+  const curr = getInteraction(eventId);
+  const nextVal = !curr.reminderEnabled;
+  saveInteraction(eventId, { reminderEnabled: nextVal });
   return nextVal;
 }
 

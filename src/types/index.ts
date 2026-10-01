@@ -13,10 +13,20 @@ export interface EventComment {
   timestamp: string;
 }
 
+export interface Contributor {
+  id: string;
+  name: string;
+  handle: string;
+  email: string;
+  role?: string; // e.g. 'author', 'presenter', 'attendee', 'co-author'
+  addedAt: string;
+}
+
 export interface UserEventInteraction {
   starred?: boolean;
   participating?: boolean;
   comments?: EventComment[];
+  reminderEnabled?: boolean;
 }
 
 export interface TechOpportunity {
@@ -27,6 +37,7 @@ export interface TechOpportunity {
   organizer: string;
   start_date: string; // ISO format: YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ
   end_date: string;   // ISO format or deadline for internships
+  submission_deadline?: string | null; // ISO date for CFP / paper submission deadline (conferences)
   format: OpportunityFormat;
   location?: string | null;
   source_url: string;
@@ -39,6 +50,7 @@ export interface TechOpportunity {
   submitted_by?: string; // Handle/identity of live user who submitted
   starred_count?: number;
   participants_count?: number;
+  contributors?: Contributor[]; // Signed-in users tagged as contributors/co-participants
 }
 
 export interface PipelineRunLog {

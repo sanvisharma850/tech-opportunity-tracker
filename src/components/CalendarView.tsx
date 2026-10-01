@@ -14,90 +14,120 @@ import {
   parseISO,
   startOfWeek,
   endOfWeek,
+  differenceInDays,
+  isToday,
 } from 'date-fns';
 import {
   ChevronLeft,
   ChevronRight,
-  Terminal,
   ExternalLink,
   Star,
   UserCheck,
-  MessageSquare,
-  Calendar as CalendarIcon,
-  ListFilter,
+  Bell,
+  BellOff,
+  Users,
+  Clock,
+  MapPin,
+  CalendarDays,
+  X,
+  Bookmark,
+  AlertTriangle,
 } from 'lucide-react';
 import { TypeBadge, TierBadge, CATEGORY_COLORS } from './Badge';
-import { getInteraction } from '@/lib/interactions';
+import { getInteraction, toggleStar, toggleParticipating, toggleReminder } from '@/lib/interactions';
+import { getCurrentUser } from '@/lib/auth';
 import { motion, AnimatePresence } from 'motion/react';
+import ContributorModal from './ContributorModal';
 
 interface CalendarViewProps {
   opportunities: TechOpportunity[];
+  onRefresh?: () => void;
 }
 
-export default function CalendarView({ opportunities }: CalendarViewProps) {
-  // Determine earliest active opportunity month or fallback to current month
-  const initialMonth = useMemo(() => {
-    if (!opportunities || opportunities.length === 0) return new Date();
-    // Sort by start date to find upcoming / current opportunities
-    const sorted = [...opportunities].sort(
-      (a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime()
-    );
-    try {
-      return parseISO(sorted[0].start_date);
-    } catch {
-      return new Date();
-    }
-  }, [opportunities]);
+// Event pill height classes
+const TYPE_PILL: Record<string, { bg: string; text: string; border: string; dot: string }> = {
+  hackathon: { bg: 'bg-purple-600/90', text: 'text-white', border: 'border-purple-400/40', dot: 'bg-purple-400' },
+  conference: { bg: 'bg-blue-600/90', text: 'text-white', border: 'border-blue-400/40', dot: 'bg-blue-400' },
+  workshop:   { bg: 'bg-emerald-600/90', text: 'text-white', border: 'border-emerald-400/40', dot: 'bg-emerald-400' },
+  internship: { bg: 'bg-amber-500/90', text: 'text-black font-bold', border: 'border-amber-400/40', dot: 'bg-amber-400' },
+  deadline:   { bg: 'bg-red-600/90', text: 'text-white', border: 'border-red-400/40', dot: 'bg-red-400' },
+};
 
-  const [currentMonth, setCurrentMonth] = useState<Date>(initialMonth);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+function getDaysUntil(dateStr: string): number {
+  try {
+    const d = parseISO(dateStr);
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    return differenceInDays(d, today);
+  } catch { return 999; }
+}
+
+function UrgencyBadge({ daysUntil, label }: { daysUntil: number; label: string }) {
+  if (daysUntil < 0) return null;
+  const color = daysUntil <= 1 ? 'bg-red-500 text-white animate-pulse' : daysUntil <= 7 ? 'bg-orange-500 text-white' : 'bg-yellow-600/80 text-white';
+  const text = daysUntil === 0 ? 'TODAY' : daysUntil === 1 ? 'TOMORROW' : `${daysUntil}d`;
+  return (
+    <span className={`text-[9px] font-black px-1 py-0.5 rounded ${color}`}>
+      {label} {text}
+    </span>
+  );
+}
+
+export default function CalendarView({ opportunities, onRefresh }: CalendarViewProps) {
+  const today = new Date();
+  const [currentMonth, setCurrentMonth] = useState<Date>(today);
+  const [selectedEvent, setSelectedEvent] = useState<TechOpportunity | null>(null);
+  const [interactionVer, setInteractionVer] = useState(0);
+  const [showContributorModal, setShowContributorModal] = useState(false);
+  const [selectedDayDate, setSelectedDayDate] = useState<Date | null>(null);
 
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(monthStart);
-  const startDate = startOfWeek(monthStart);
-  const endDate = endOfWeek(monthEnd);
-
+  const startDate = startOfWeek(monthStart, { weekStartsOn: 0 });
+  const endDate = endOfWeek(monthEnd, { weekStartsOn: 0 });
   const days = eachDayOfInterval({ start: startDate, end: endDate });
 
-  /**
-   * Evaluates if event is active on a given day:
-   * Works accurately with ISO YYYY-MM-DD strings in local timezone.
-   */
-  const getDayEvents = (day: Date) => {
-    const dayStr = format(day, 'yyyy-MM-dd');
+  const refreshInteractions = () => setInteractionVer(v => v + 1);
 
-    return opportunities.filter(event => {
+  /**
+   * Returns events for a given day:
+   * - conferences/hackathons/workshops: span start_date → end_date
+   * - internships: only show on start_date (single box)
+   * - conferences with submission_deadline: also show a "CFP DEADLINE" marker on that day
+   */
+  const getDayEvents = (day: Date): { event: TechOpportunity; isDeadline?: boolean; isStart?: boolean }[] => {
+    const dayStr = format(day, 'yyyy-MM-dd');
+    const results: { event: TechOpportunity; isDeadline?: boolean; isStart?: boolean }[] = [];
+
+    for (const event of opportunities) {
       try {
         const startStr = event.start_date.split('T')[0];
         const endStr = event.end_date.split('T')[0];
-        return dayStr >= startStr && dayStr <= endStr;
-      } catch {
-        return false;
-      }
-    });
-  };
 
-  // Distinct months that contain opportunities for instant quick-jump
-  const availableMonths = useMemo(() => {
-    const map = new Map<string, { label: string; date: Date; count: number }>();
-    opportunities.forEach(o => {
-      try {
-        const d = parseISO(o.start_date);
-        const key = format(d, 'yyyy-MM');
-        const existing = map.get(key);
-        if (existing) {
-          existing.count++;
+        if (event.type === 'internship') {
+          // Internships: only on their start_date
+          if (dayStr === startStr) {
+            results.push({ event, isStart: true });
+          }
         } else {
-          map.set(key, { label: format(d, 'MMM yyyy'), date: startOfMonth(d), count: 1 });
+          // Non-internships: show across span
+          if (dayStr >= startStr && dayStr <= endStr) {
+            results.push({ event, isStart: dayStr === startStr });
+          }
+        }
+
+        // Submission deadline marker for conferences
+        if (event.type === 'conference' && event.submission_deadline) {
+          const dlStr = event.submission_deadline.split('T')[0];
+          if (dayStr === dlStr) {
+            results.push({ event, isDeadline: true });
+          }
         }
       } catch {}
-    });
-    return Array.from(map.values()).sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [opportunities]);
+    }
+    return results;
+  };
 
-  const selectedDateEvents = selectedDate ? getDayEvents(selectedDate) : [];
-
-  // Month-wide events list
   const currentMonthEvents = useMemo(() => {
     const mStart = format(monthStart, 'yyyy-MM-dd');
     const mEnd = format(monthEnd, 'yyyy-MM-dd');
@@ -108,341 +138,451 @@ export default function CalendarView({ opportunities }: CalendarViewProps) {
     });
   }, [opportunities, monthStart, monthEnd]);
 
+  const handleEventClick = (event: TechOpportunity, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedEvent(event);
+  };
+
+  const currentUser = getCurrentUser();
+
   return (
-    <div className="bg-[#090e13] border border-zinc-800 rounded-xl overflow-hidden font-mono shadow-2xl space-y-0">
-      {/* Terminal Title Bar */}
-      <div className="bg-[#0f1720] border-b border-zinc-800 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2">
-          <div className="flex gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-500/80 inline-block" />
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80 inline-block" />
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80 inline-block" />
-          </div>
-          <span className="text-zinc-400 font-mono pl-2 flex items-center gap-1.5">
-            <Terminal className="w-3.5 h-3.5 text-emerald-400" />
-            <span>sys/calendar --month {format(currentMonth, 'yyyy-MM')}</span>
-          </span>
-        </div>
-
-        {/* Month Navigation & Controls */}
+    <div className="flex flex-col bg-white dark:bg-gray-900 rounded-2xl shadow-xl overflow-hidden border border-gray-200 dark:border-gray-700/50">
+      {/* ── Google Calendar-style Toolbar ─────────────────────────────────── */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
-            className="p-1.5 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700/60 transition-colors"
-            title="Previous month"
+            onClick={() => setCurrentMonth(new Date())}
+            className="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
           >
-            <ChevronLeft className="w-4 h-4" />
+            Today
           </button>
-
-          <span className="px-3 py-1 font-bold text-emerald-400 bg-emerald-950/50 border border-emerald-500/50 rounded">
-            {format(currentMonth, 'MMMM yyyy').toUpperCase()}
-          </span>
-
-          <button
-            onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
-            className="p-1.5 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700/60 transition-colors"
-            title="Next month"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Quick Jump to Event Months Bar */}
-      {availableMonths.length > 0 && (
-        <div className="bg-[#0b1218] px-4 py-2 border-b border-zinc-800/80 flex items-center gap-2 overflow-x-auto text-[11px] scrollbar-none">
-          <span className="text-zinc-500 font-semibold uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
-            <CalendarIcon className="w-3 h-3 text-cyan-400" />
-            <span>JUMP_TO_MONTH:</span>
-          </span>
-          <div className="flex items-center gap-1.5">
-            {availableMonths.map(m => {
-              const isActive = isSameMonth(m.date, currentMonth);
-              return (
-                <button
-                  key={m.label}
-                  onClick={() => {
-                    setCurrentMonth(m.date);
-                    setSelectedDate(null);
-                  }}
-                  className={`px-2 py-0.5 rounded border transition-all whitespace-nowrap ${
-                    isActive
-                      ? 'bg-emerald-600 text-black font-bold border-emerald-400'
-                      : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-700'
-                  }`}
-                >
-                  {m.label} ({m.count})
-                </button>
-              );
-            })}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
+              className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
+              className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 transition-colors"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+            {format(currentMonth, 'MMMM yyyy')}
+          </h2>
         </div>
-      )}
 
-      {/* Category Legend Bar */}
-      <div className="bg-[#0b1218] px-4 py-2 border-b border-zinc-800/80 flex flex-wrap items-center justify-between text-[11px] text-zinc-400 gap-2">
-        <span className="text-zinc-500 font-semibold uppercase tracking-wider">EVENT COLOR CODING:</span>
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="flex items-center gap-1.5 text-purple-300">
-            <span className="w-2.5 h-2.5 rounded-xs bg-purple-500 inline-block shadow-[0_0_8px_rgba(168,85,247,0.5)]" />
-            Hackathons
-          </span>
-          <span className="flex items-center gap-1.5 text-cyan-300">
-            <span className="w-2.5 h-2.5 rounded-xs bg-cyan-400 inline-block shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
-            Conferences (Core A*/A/B)
-          </span>
-          <span className="flex items-center gap-1.5 text-emerald-300">
-            <span className="w-2.5 h-2.5 rounded-xs bg-emerald-400 inline-block shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
-            Workshops
-          </span>
-          <span className="flex items-center gap-1.5 text-amber-300">
-            <span className="w-2.5 h-2.5 rounded-xs bg-amber-400 inline-block shadow-[0_0_8px_rgba(251,191,36,0.5)]" />
-            Internships
+        {/* Legend */}
+        <div className="hidden sm:flex items-center gap-3 text-[11px]">
+          {(['hackathon', 'conference', 'workshop', 'internship'] as const).map(t => (
+            <span key={t} className="flex items-center gap-1 text-gray-600 dark:text-gray-400 capitalize">
+              <span className={`w-2 h-2 rounded-sm ${TYPE_PILL[t].bg}`} />
+              {t}s
+            </span>
+          ))}
+          <span className="flex items-center gap-1 text-gray-600 dark:text-gray-400">
+            <span className="w-2 h-2 rounded-sm bg-red-600" />
+            CFP Deadline
           </span>
         </div>
       </div>
 
-      {/* Weekday headers */}
-      <div className="grid grid-cols-7 border-b border-zinc-800 bg-[#0c141c] text-center py-2 text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-        <div>SUN</div>
-        <div>MON</div>
-        <div>TUE</div>
-        <div>WED</div>
-        <div>THU</div>
-        <div>FRI</div>
-        <div>SAT</div>
+      {/* ── Weekday Header ──────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-7 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
+        {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
+          <div key={d} className="py-2 text-center text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+            {d}
+          </div>
+        ))}
       </div>
 
-      {/* Month Calendar Days Grid */}
-      <div className="grid grid-cols-7 divide-x divide-y divide-zinc-800/60 bg-[#080d12]">
-        {days.map(day => {
-          const dayEvents = getDayEvents(day);
-          const isCurrMonth = isSameMonth(day, currentMonth);
-          const isToday = isSameDay(day, new Date());
-          const isSelected = selectedDate ? isSameDay(day, selectedDate) : false;
+      {/* ── Calendar Grid ───────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-7 flex-1 bg-white dark:bg-gray-900">
+        {days.map((day, idx) => {
+          const dayEntries = getDayEvents(day);
+          const inMonth = isSameMonth(day, currentMonth);
+          const todayFlag = isToday(day);
+          const isSelected = selectedDayDate ? isSameDay(day, selectedDayDate) : false;
 
           return (
-            <motion.div
+            <div
               key={day.toISOString()}
-              whileHover={{ scale: 1.008 }}
-              transition={{ duration: 0.1 }}
-              onClick={() => setSelectedDate(day)}
-              className={`min-h-[110px] sm:min-h-[135px] p-2 transition-all cursor-pointer flex flex-col justify-between ${
-                !isCurrMonth ? 'opacity-25 bg-[#05080c]' : 'bg-[#090e13]'
-              } ${isSelected ? 'ring-2 ring-emerald-400 bg-emerald-950/20 z-10' : 'hover:bg-[#0f1720]'}`}
+              onClick={() => setSelectedDayDate(isSameDay(day, selectedDayDate || new Date(0)) ? null : day)}
+              className={`
+                min-h-[110px] sm:min-h-[130px] p-1 border-b border-r border-gray-100 dark:border-gray-800 cursor-pointer transition-colors relative
+                ${!inMonth ? 'bg-gray-50/60 dark:bg-gray-900/40' : 'bg-white dark:bg-gray-900 hover:bg-blue-50/30 dark:hover:bg-blue-900/10'}
+                ${isSelected ? 'ring-2 ring-inset ring-blue-500' : ''}
+                ${idx % 7 === 0 ? 'border-l' : ''}
+              `}
             >
-              <div className="flex items-center justify-between">
+              {/* Day number */}
+              <div className="flex items-center justify-between mb-1">
                 <span
-                  className={`text-xs font-mono font-bold w-6 h-6 flex items-center justify-center rounded ${
-                    isToday
-                      ? 'bg-emerald-500 text-black font-extrabold shadow-[0_0_10px_rgba(16,185,129,0.5)]'
-                      : isSelected
-                      ? 'bg-zinc-700 text-white'
-                      : 'text-zinc-400'
-                  }`}
+                  className={`
+                    text-xs font-semibold w-6 h-6 flex items-center justify-center rounded-full transition-colors
+                    ${todayFlag ? 'bg-blue-600 text-white' : inMonth ? 'text-gray-900 dark:text-gray-100' : 'text-gray-300 dark:text-gray-600'}
+                  `}
                 >
                   {format(day, 'd')}
                 </span>
-
-                {dayEvents.length > 0 && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-zinc-800 text-emerald-400 border border-emerald-500/40 shadow-xs">
-                    {dayEvents.length}
+                {dayEntries.length > 0 && (
+                  <span className="text-[9px] font-bold text-gray-400 dark:text-gray-500 pr-0.5">
+                    {dayEntries.length}
                   </span>
                 )}
               </div>
 
-              {/* Event items in day cell with explicit hyperlinks & category color coding */}
-              <div className="mt-1 space-y-1 overflow-hidden">
-                {dayEvents.slice(0, 3).map(evt => {
-                  const cfg = CATEGORY_COLORS[evt.type] || CATEGORY_COLORS.hackathon;
-                  const interaction = getInteraction(evt.id);
+              {/* Event pills */}
+              <div className="space-y-0.5 overflow-hidden">
+                {dayEntries.slice(0, 3).map((entry, ei) => {
+                  const { event, isDeadline, isStart } = entry;
+                  const cfg = isDeadline ? TYPE_PILL.deadline : TYPE_PILL[event.type] || TYPE_PILL.hackathon;
+                  const label = isDeadline
+                    ? `⏳ CFP: ${event.title}`
+                    : event.type === 'internship'
+                    ? `📌 ${event.title}`
+                    : event.title;
+                  const interaction = getInteraction(event.id);
 
                   return (
-                    <a
-                      key={evt.id}
-                      href={evt.source_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
-                      className={`group/link block truncate text-[10px] px-1.5 py-0.5 rounded border transition-all ${cfg.bg} ${cfg.text} ${cfg.border} hover:underline decoration-white underline-offset-2 flex items-center justify-between gap-1`}
-                      title={`${evt.title} (${evt.organizer}) - Click to open source URL`}
+                    <button
+                      key={`${event.id}-${isDeadline ? 'dl' : 'ev'}-${ei}`}
+                      onClick={e => {
+                        e.stopPropagation();
+                        setSelectedEvent(event);
+                      }}
+                      className={`
+                        w-full text-left text-[10px] px-1.5 py-0.5 rounded truncate flex items-center gap-1
+                        ${cfg.bg} ${cfg.text} hover:opacity-90 transition-opacity
+                        ${isStart && !isDeadline ? 'rounded-l-full' : ''}
+                      `}
+                      title={label}
                     >
-                      <span className="truncate flex-1">
-                        {interaction.participating ? '✓ ' : interaction.starred ? '★ ' : ''}
-                        {evt.title}
-                      </span>
-                      <ExternalLink className="w-2.5 h-2.5 opacity-60 group-hover/link:opacity-100 flex-shrink-0" />
-                    </a>
+                      {interaction.participating && !isDeadline && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-white/80 flex-shrink-0" />
+                      )}
+                      <span className="truncate">{label}</span>
+                    </button>
                   );
                 })}
-
-                {dayEvents.length > 3 && (
-                  <div className="text-[9px] text-zinc-400 pl-1 font-semibold">
-                    +{dayEvents.length - 3} more
-                  </div>
+                {dayEntries.length > 3 && (
+                  <button
+                    onClick={e => { e.stopPropagation(); setSelectedDayDate(day); }}
+                    className="text-[10px] text-blue-600 dark:text-blue-400 font-medium pl-1 hover:underline"
+                  >
+                    +{dayEntries.length - 3} more
+                  </button>
                 )}
               </div>
-            </motion.div>
+            </div>
           );
         })}
       </div>
 
-      {/* Selected Day Agenda Drawer with Hyperlinks & Details */}
-      <AnimatePresence>
-        {selectedDate && (
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            className="p-4 border-t border-zinc-800 bg-[#0a1016]"
-          >
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs sm:text-sm font-bold text-zinc-200 flex items-center gap-2">
-                <span className="text-emerald-400">&gt;&gt;</span>
-                <span>AGENDA: {format(selectedDate, 'EEEE, yyyy-MM-dd').toUpperCase()}</span>
-                <span className="text-zinc-500 font-normal">
-                  ({selectedDateEvents.length} active opportunities)
-                </span>
-              </h3>
-              <button
-                onClick={() => setSelectedDate(null)}
-                className="text-[11px] text-zinc-500 hover:text-white"
-              >
-                [CLOSE]
-              </button>
-            </div>
-
-            {selectedDateEvents.length === 0 ? (
-              <p className="text-xs text-zinc-500 italic py-2">
-                // No tech opportunities active on this specific date. Click on days with numeric badges to inspect.
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {selectedDateEvents.map(evt => {
-                  const cfg = CATEGORY_COLORS[evt.type] || CATEGORY_COLORS.hackathon;
-                  const interaction = getInteraction(evt.id);
-
-                  return (
-                    <div
-                      key={evt.id}
-                      className={`p-3 rounded bg-[#0d141b] border ${cfg.border} flex flex-col justify-between group`}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-1 mb-2">
-                          <div className="flex items-center gap-1.5">
-                            <TypeBadge type={evt.type} />
-                            {evt.type === 'conference' && <TierBadge tier={evt.conference_tier} />}
-                          </div>
-
-                          <div className="flex items-center gap-1 text-[11px] text-zinc-400">
-                            {interaction.starred && (
-                              <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                            )}
-                            {interaction.participating && (
-                              <span className="text-[10px] text-emerald-400 font-bold border border-emerald-500/50 px-1 rounded">
-                                ATTENDING
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Clickable Hyperlink */}
-                        <a
-                          href={evt.source_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-bold text-xs sm:text-sm text-zinc-100 group-hover:text-emerald-400 transition-colors flex items-start justify-between gap-1.5 hover:underline"
-                        >
-                          <span>{evt.title}</span>
-                          <ExternalLink className="w-3.5 h-3.5 text-zinc-500 group-hover:text-emerald-400 flex-shrink-0 mt-0.5" />
-                        </a>
-
-                        <div className="text-[11px] text-zinc-400 mt-1 space-y-0.5">
-                          <div>
-                            <span className="text-zinc-600">ORG:</span> {evt.organizer}
-                          </div>
-                          <div>
-                            <span className="text-zinc-600">DATES:</span> {evt.start_date} → {evt.end_date}
-                          </div>
-                          <div>
-                            <span className="text-zinc-600">FMT:</span> [{evt.format}]
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 pt-2 border-t border-zinc-800/80 flex items-center justify-between text-xs">
-                        <a
-                          href={evt.source_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-emerald-400 hover:text-emerald-300 font-semibold inline-flex items-center gap-1"
-                        >
-                          <span>VIEW REGISTRATION LINK</span>
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-
-                        {interaction.comments && interaction.comments.length > 0 && (
-                          <span className="text-zinc-500 text-[11px] flex items-center gap-1">
-                            <MessageSquare className="w-3 h-3" />
-                            {interaction.comments.length}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Month-Wide Summary Agenda List Below Grid */}
-      <div className="p-4 border-t border-zinc-800 bg-[#070c10]">
-        <div className="flex items-center justify-between mb-2.5">
-          <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
-            <ListFilter className="w-3.5 h-3.5 text-emerald-400" />
-            <span>OPPORTUNITIES SCHEDULED IN {format(currentMonth, 'MMMM yyyy').toUpperCase()}</span>
-            <span className="text-zinc-500 font-normal">({currentMonthEvents.length} events)</span>
-          </h3>
-        </div>
-
+      {/* ── This Month Summary ──────────────────────────────────────────────── */}
+      <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-800/50">
+        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+          <CalendarDays className="w-3.5 h-3.5" />
+          {format(currentMonth, 'MMMM yyyy')} — {currentMonthEvents.length} events
+        </h3>
         {currentMonthEvents.length === 0 ? (
-          <div className="text-xs text-zinc-500 italic py-2">
-            No events scheduled for {format(currentMonth, 'MMMM yyyy')}. Use the "JUMP_TO_MONTH" bar above to browse months with upcoming hackathons and conferences.
-          </div>
+          <p className="text-xs text-gray-400 italic">No events this month. Navigate with arrows or add one.</p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {currentMonthEvents.map(evt => {
               const cfg = CATEGORY_COLORS[evt.type] || CATEGORY_COLORS.hackathon;
+              const daysToStart = getDaysUntil(evt.start_date);
+              const daysToDeadline = evt.submission_deadline ? getDaysUntil(evt.submission_deadline) : null;
               return (
-                <div
+                <button
                   key={evt.id}
-                  className={`p-2.5 rounded bg-[#090e13] border ${cfg.border} flex flex-col justify-between`}
+                  onClick={() => setSelectedEvent(evt)}
+                  className={`text-left p-2.5 rounded-xl border ${cfg.border} bg-white dark:bg-gray-900 hover:shadow-md transition-all group`}
                 >
-                  <div>
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <TypeBadge type={evt.type} />
-                      {evt.type === 'conference' && <TierBadge tier={evt.conference_tier} />}
-                    </div>
-                    <a
-                      href={evt.source_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-bold text-xs text-zinc-100 hover:text-emerald-400 flex items-center justify-between gap-1 group"
-                    >
-                      <span className="truncate">{evt.title}</span>
-                      <ExternalLink className="w-3 h-3 text-zinc-500 group-hover:text-emerald-400 flex-shrink-0" />
-                    </a>
-                    <div className="text-[10px] text-zinc-500 mt-1">
-                      {evt.start_date} → {evt.end_date} • {evt.organizer}
-                    </div>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <TypeBadge type={evt.type} />
+                    {evt.type === 'conference' && <TierBadge tier={evt.conference_tier} />}
                   </div>
-                </div>
+                  <p className="text-xs font-semibold text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 truncate">
+                    {evt.title}
+                  </p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">
+                    {evt.type === 'internship' ? '📌 Opens: ' : ''}{format(parseISO(evt.start_date), 'MMM d')}
+                    {evt.type !== 'internship' && ` → ${format(parseISO(evt.end_date), 'MMM d')}`}
+                  </p>
+                  {daysToStart >= 0 && daysToStart <= 14 && evt.type !== 'internship' && (
+                    <UrgencyBadge daysUntil={daysToStart} label="Starts" />
+                  )}
+                  {daysToDeadline !== null && daysToDeadline >= 0 && daysToDeadline <= 14 && (
+                    <UrgencyBadge daysUntil={daysToDeadline} label="CFP Due" />
+                  )}
+                </button>
               );
             })}
           </div>
         )}
+      </div>
+
+      {/* ── Event Detail Popover / Side Panel ──────────────────────────────── */}
+      <AnimatePresence>
+        {selectedEvent && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedEvent(null)}
+              className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
+            />
+            {/* Panel */}
+            <motion.div
+              initial={{ opacity: 0, x: 60, scale: 0.97 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 60, scale: 0.97 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 340 }}
+              className="fixed right-0 top-0 bottom-0 z-50 w-full sm:w-[480px] bg-white dark:bg-gray-900 shadow-2xl border-l border-gray-200 dark:border-gray-700 overflow-y-auto"
+            >
+              <EventDetailPanel
+                event={selectedEvent}
+                onClose={() => setSelectedEvent(null)}
+                onRefresh={refreshInteractions}
+                onOpenContributors={() => setShowContributorModal(true)}
+                currentUser={currentUser}
+              />
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ── Contributor Modal ───────────────────────────────────────────────── */}
+      {showContributorModal && selectedEvent && (
+        <ContributorModal
+          event={selectedEvent}
+          onClose={() => setShowContributorModal(false)}
+          onSaved={() => { setShowContributorModal(false); onRefresh?.(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Event Detail Panel
+// ──────────────────────────────────────────────────────────────────────────────
+function EventDetailPanel({
+  event,
+  onClose,
+  onRefresh,
+  onOpenContributors,
+  currentUser,
+}: {
+  event: TechOpportunity;
+  onClose: () => void;
+  onRefresh: () => void;
+  onOpenContributors: () => void;
+  currentUser: ReturnType<typeof getCurrentUser>;
+}) {
+  const [interaction, setInteraction] = React.useState(() => getInteraction(event.id));
+  const cfg = TYPE_PILL[event.type] || TYPE_PILL.hackathon;
+  const daysToStart = getDaysUntil(event.start_date);
+  const daysToDeadline = event.submission_deadline ? getDaysUntil(event.submission_deadline) : null;
+
+  const handleStar = () => {
+    toggleStar(event.id);
+    setInteraction(getInteraction(event.id));
+    onRefresh();
+  };
+  const handleParticipate = () => {
+    toggleParticipating(event.id);
+    setInteraction(getInteraction(event.id));
+    onRefresh();
+  };
+  const handleReminder = () => {
+    toggleReminder(event.id);
+    setInteraction(getInteraction(event.id));
+    onRefresh();
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header strip */}
+      <div className={`${cfg.bg} px-5 py-4 flex items-start justify-between`}>
+        <div>
+          <div className="flex items-center gap-1.5 mb-1">
+            <TypeBadge type={event.type} />
+            {event.type === 'conference' && <TierBadge tier={event.conference_tier} />}
+          </div>
+          <h2 className="text-base font-bold text-white leading-tight">{event.title}</h2>
+          <p className="text-xs text-white/80 mt-0.5">{event.organizer}</p>
+        </div>
+        <button onClick={onClose} className="p-1.5 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors ml-3 mt-0.5 flex-shrink-0">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div className="flex-1 p-5 space-y-4 overflow-y-auto">
+        {/* Urgency alerts */}
+        {daysToStart !== null && daysToStart >= 0 && daysToStart <= 14 && event.type !== 'internship' && (
+          <div className={`flex items-center gap-2 p-2.5 rounded-lg text-xs font-semibold
+            ${daysToStart <= 1 ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700' :
+              daysToStart <= 7 ? 'bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-700' :
+              'bg-yellow-50 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700'}`}
+          >
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            Event starts {daysToStart === 0 ? 'TODAY!' : daysToStart === 1 ? 'TOMORROW!' : `in ${daysToStart} days`}
+          </div>
+        )}
+        {daysToDeadline !== null && daysToDeadline >= 0 && daysToDeadline <= 14 && (
+          <div className={`flex items-center gap-2 p-2.5 rounded-lg text-xs font-semibold
+            ${daysToDeadline <= 1 ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700' :
+              daysToDeadline <= 7 ? 'bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-700' :
+              'bg-yellow-50 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700'}`}
+          >
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            ⏳ CFP/Paper submission {daysToDeadline === 0 ? 'DUE TODAY!' : daysToDeadline === 1 ? 'DUE TOMORROW!' : `due in ${daysToDeadline} days`}
+          </div>
+        )}
+
+        {/* Date details */}
+        <div className="space-y-2 text-sm">
+          <div className="flex items-start gap-2.5 text-gray-700 dark:text-gray-300">
+            <CalendarDays className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+            <div>
+              {event.type === 'internship' ? (
+                <div>
+                  <p className="font-medium">Applications Open: {format(parseISO(event.start_date), 'EEE, MMM d, yyyy')}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Deadline: {format(parseISO(event.end_date), 'EEE, MMM d, yyyy')}</p>
+                </div>
+              ) : (
+                <div>
+                  <p className="font-medium">
+                    {format(parseISO(event.start_date), 'EEE, MMM d')} – {format(parseISO(event.end_date), 'EEE, MMM d, yyyy')}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {differenceInDays(parseISO(event.end_date), parseISO(event.start_date)) + 1} day(s)
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {event.submission_deadline && (
+            <div className="flex items-start gap-2.5 text-red-600 dark:text-red-400">
+              <Clock className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-semibold text-xs uppercase tracking-wide">Paper/CFP Submission Deadline</p>
+                <p className="font-medium">{format(parseISO(event.submission_deadline), 'EEE, MMM d, yyyy')}</p>
+                {daysToDeadline !== null && daysToDeadline >= 0 && (
+                  <p className="text-xs font-bold">{daysToDeadline === 0 ? 'DUE TODAY' : `${daysToDeadline} days remaining`}</p>
+                )}
+                {daysToDeadline !== null && daysToDeadline < 0 && (
+                  <p className="text-xs text-gray-400">Submission period has passed</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {event.location && (
+            <div className="flex items-start gap-2.5 text-gray-600 dark:text-gray-400">
+              <MapPin className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" />
+              <p>{event.location}</p>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2.5 text-gray-600 dark:text-gray-400">
+            <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+              <span className={`w-2.5 h-2.5 rounded-sm ${cfg.bg}`} />
+            </span>
+            <span className="capitalize">{event.format}</span>
+          </div>
+        </div>
+
+        {/* Description */}
+        <div>
+          <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">About</p>
+          <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{event.description}</p>
+        </div>
+
+        {/* Actions row */}
+        <div className="flex flex-wrap gap-2 border-t border-gray-100 dark:border-gray-700 pt-4">
+          <button
+            onClick={handleStar}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
+              ${interaction.starred
+                ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-600'
+                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-amber-300'
+              }`}
+          >
+            <Star className={`w-3.5 h-3.5 ${interaction.starred ? 'fill-amber-500 text-amber-500' : ''}`} />
+            {interaction.starred ? 'Starred' : 'Star'}
+          </button>
+
+          <button
+            onClick={handleParticipate}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
+              ${interaction.participating
+                ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-600'
+                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-blue-300'
+              }`}
+          >
+            <UserCheck className={`w-3.5 h-3.5 ${interaction.participating ? 'text-blue-600' : ''}`} />
+            {interaction.participating ? '✓ Participating' : 'Mark Attending'}
+          </button>
+
+          <button
+            onClick={handleReminder}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
+              ${interaction.reminderEnabled
+                ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border-violet-300 dark:border-violet-600'
+                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-violet-300'
+              }`}
+          >
+            {interaction.reminderEnabled ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+            {interaction.reminderEnabled ? 'Reminder On' : 'Set Reminder'}
+          </button>
+
+          <button
+            onClick={onOpenContributors}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-emerald-400 transition-all"
+          >
+            <Users className="w-3.5 h-3.5" />
+            Contributors {event.contributors && event.contributors.length > 0 ? `(${event.contributors.length})` : ''}
+          </button>
+        </div>
+
+        {/* Contributors list */}
+        {event.contributors && event.contributors.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Team / Contributors</p>
+            <div className="flex flex-wrap gap-2">
+              {event.contributors.map(c => (
+                <div key={c.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+                  <div className="w-5 h-5 rounded-full bg-gradient-to-br from-blue-400 to-violet-500 flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0">
+                    {(c.name?.[0] || c.handle?.[0] || '?').toUpperCase()}
+                  </div>
+                  <span className="text-xs font-medium text-gray-700 dark:text-gray-300">@{c.handle}</span>
+                  {c.role && <span className="text-[10px] text-gray-400">{c.role}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Source link */}
+        <a
+          href={event.source_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium"
+        >
+          <Bookmark className="w-4 h-4" />
+          Open Official Page
+          <ExternalLink className="w-3.5 h-3.5" />
+        </a>
       </div>
     </div>
   );

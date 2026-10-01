@@ -53,11 +53,13 @@ export async function POST(request: Request) {
       organizer,
       start_date,
       end_date,
+      submission_deadline,
       format,
       location,
       source_url,
       description,
       submitted_by,
+      contributors,
     } = body;
 
     if (!title || !type || !organizer || !start_date || !end_date || !source_url) {
@@ -67,7 +69,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Mandatory URL validation - never invent or accept empty
+    // Mandatory URL validation
     try {
       new URL(source_url);
     } catch {
@@ -105,6 +107,7 @@ export async function POST(request: Request) {
       organizer: organizer.trim(),
       start_date,
       end_date,
+      submission_deadline: submission_deadline || null,
       format: format || 'online',
       location: location?.trim() || null,
       source_url: source_url.trim(),
@@ -115,6 +118,7 @@ export async function POST(request: Request) {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       submitted_by: submitted_by || 'live_user',
+      contributors: contributors || [],
     };
 
     events.push(newOpp);
@@ -129,7 +133,7 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const body = await request.json();
-    const { id, status, discovery_confidence, conference_tier } = body;
+    const { id, status, discovery_confidence, conference_tier, submission_deadline, contributors } = body;
     if (!id) {
       return NextResponse.json({ success: false, error: 'Missing opportunity ID' }, { status: 400 });
     }
@@ -143,6 +147,8 @@ export async function PATCH(request: Request) {
     if (status) events[index].status = status;
     if (discovery_confidence) events[index].discovery_confidence = discovery_confidence;
     if (conference_tier !== undefined) events[index].conference_tier = conference_tier;
+    if (submission_deadline !== undefined) events[index].submission_deadline = submission_deadline;
+    if (contributors !== undefined) events[index].contributors = contributors;
     events[index].updated_at = new Date().toISOString();
 
     saveOpportunities(events);

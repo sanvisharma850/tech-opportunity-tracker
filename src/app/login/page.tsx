@@ -165,17 +165,17 @@ export default function LoginPage() {
                 <Shield className="w-3 h-3 text-purple-400" />
                 <span>WHITELISTED_ADMINS:</span>
               </span>
-              <span className="text-purple-400 font-bold">TanayThapar • Sanvi850</span>
+              <span className="text-purple-400 font-bold">TanayThapar • Sanvi850 • panchadip125</span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 pt-1">
+            <div className="grid grid-cols-3 gap-2 pt-1">
               <button
                 type="button"
                 onClick={() => handleSelectWhitelisted('TanayThapar')}
                 className="py-1.5 px-2 bg-zinc-900 hover:bg-purple-950/40 border border-purple-500/40 text-purple-300 rounded text-xs transition-all text-left flex items-center justify-between"
               >
                 <span>@TanayThapar</span>
-                <span className="text-[10px] text-zinc-500">Admin &gt;</span>
+                <span className="text-[10px] text-zinc-500">&gt;</span>
               </button>
 
               <button
@@ -184,7 +184,16 @@ export default function LoginPage() {
                 className="py-1.5 px-2 bg-zinc-900 hover:bg-purple-950/40 border border-purple-500/40 text-purple-300 rounded text-xs transition-all text-left flex items-center justify-between"
               >
                 <span>@Sanvi850</span>
-                <span className="text-[10px] text-zinc-500">Admin &gt;</span>
+                <span className="text-[10px] text-zinc-500">&gt;</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectWhitelisted('panchadip125')}
+                className="py-1.5 px-2 bg-zinc-900 hover:bg-purple-950/40 border border-purple-500/40 text-purple-300 rounded text-xs transition-all text-left flex items-center justify-between"
+              >
+                <span>@panchadip125</span>
+                <span className="text-[10px] text-zinc-500">&gt;</span>
               </button>
             </div>
           </div>

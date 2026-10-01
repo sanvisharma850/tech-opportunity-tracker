@@ -5,8 +5,8 @@ import { UserProfile, UserRole } from '@/types/auth';
 const AUTH_STORAGE_KEY = 'techradar_auth_session_v1';
 const USERS_DB_KEY = 'techradar_registered_users_v1';
 
-// Strict Admin Whitelist: TanayThapar and Sanvi850
-export const ADMIN_WHITELIST: string[] = ['tanaythapar', 'sanvi850'];
+// Strict Admin Whitelist: TanayThapar, Sanvi850, and panchadip125
+export const ADMIN_WHITELIST: string[] = ['tanaythapar', 'sanvi850', 'panchadip125'];
 
 export function isWhitelistedAdmin(identifier: string): boolean {
   if (!identifier) return false;

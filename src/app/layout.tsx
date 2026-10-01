@@ -3,8 +3,8 @@ import "./globals.css";
 import AuthGuard from "@/components/AuthGuard";
 
 export const metadata: Metadata = {
-  title: "Tech Opportunity Tracker | Terminal Radar",
-  description: "Track hackathons, Core A*/A/B conferences, workshops, and tech internships.",
+  title: "TechRadar — Conferences, Hackathons & Internships",
+  description: "Track Core A*/A conferences with deadlines, Hack2skill hackathons, workshops, and internships on a Google Calendar-style interface.",
 };
 
 export default function RootLayout({
@@ -14,7 +14,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark h-full antialiased">
-      <body className="min-h-full flex flex-col bg-[#070b0e] text-zinc-200">
+      <body className="min-h-full flex flex-col bg-gray-950 text-gray-100">
         <AuthGuard>{children}</AuthGuard>
       </body>
     </html>

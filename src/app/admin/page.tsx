@@ -142,9 +142,10 @@ export default function AdminAnalyticsDashboard() {
               <p>
                 This backend tab is strictly restricted to whitelisted administrators:
               </p>
-              <div className="flex gap-2 text-purple-400 font-bold pt-1">
+              <div className="flex flex-wrap gap-2 text-purple-400 font-bold pt-1">
                 <span>• @TanayThapar</span>
                 <span>• @Sanvi850</span>
+                <span>• @panchadip125</span>
               </div>
               {user && (
                 <div className="pt-1.5 text-zinc-500 text-[11px] border-t border-zinc-800/80">
@@ -154,18 +155,24 @@ export default function AdminAnalyticsDashboard() {
             </div>
 
             <div className="pt-2 flex flex-col gap-2">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   onClick={() => handleAdminAuthOverride('TanayThapar')}
                   className="py-2 bg-purple-950 hover:bg-purple-900 border border-purple-500/60 text-purple-300 font-bold text-xs rounded transition-colors"
                 >
-                  LOGIN: @TanayThapar
+                  @TanayThapar
                 </button>
                 <button
                   onClick={() => handleAdminAuthOverride('Sanvi850')}
                   className="py-2 bg-purple-950 hover:bg-purple-900 border border-purple-500/60 text-purple-300 font-bold text-xs rounded transition-colors"
                 >
-                  LOGIN: @Sanvi850
+                  @Sanvi850
+                </button>
+                <button
+                  onClick={() => handleAdminAuthOverride('panchadip125')}
+                  className="py-2 bg-purple-950 hover:bg-purple-900 border border-purple-500/60 text-purple-300 font-bold text-xs rounded transition-colors"
+                >
+                  @panchadip125
                 </button>
               </div>
 
